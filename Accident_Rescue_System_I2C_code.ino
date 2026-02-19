@@ -4,97 +4,123 @@
 #include <SoftwareSerial.h>
 #include <LiquidCrystal_I2C.h>
 
-// Initialize MPU6050
 MPU6050 mpu6050(Wire);
-
-// Define constants
-const char* phoneNumber = "+919482892959";  // Predefined number
-const char* message = "Accident detected. Location: https://maps.google.com/?q=";
-
-// Create objects
 TinyGPSPlus gps;
-SoftwareSerial gpsSerial(10, 11);  // GPS module (TX=10, RX=11)
-SoftwareSerial gsmSerial(3, 2);    // GSM module (TX=3, RX=2)
-LiquidCrystal_I2C lcd(0x27, 16, 2);  // I2C LCD at address 0x27
 
+SoftwareSerial gpsSerial(10, 11);
+SoftwareSerial gsmSerial(3, 2);
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+const char phoneNumber[] = "+919482892959";
 bool accidentDetected = false;
 
-void setup() {
-  Serial.begin(9600);
-  gpsSerial.begin(9600);  // Initialize GPS serial communication
-  gsmSerial.begin(9600);  // Initialize GSM serial communication
-  Wire.begin();
-  mpu6050.begin();
-  mpu6050.calcGyroOffsets(true);  // Calibrate gyro
+void sendSMSWithLocation(const char *number);
+void makeCalls(const char *number);
+void readGPS();
 
-  // Initialize LCD
-  lcd.init();
-  lcd.backlight();
-  lcd.clear();
+void setup()
+{
+    Serial.begin(9600);
+    gpsSerial.begin(9600);
+    gsmSerial.begin(9600);
 
-  Serial.println("System Initialized");
+    Wire.begin();
+    mpu6050.begin();
+    mpu6050.calcGyroOffsets(true);
+
+    lcd.init();
+    lcd.backlight();
+    lcd.clear();
+    lcd.print("System Ready");
 }
 
-void loop() {
-  mpu6050.update();  // Update MPU6050 sensor readings
+void loop()
+{
+    readGPS();
+    mpu6050.update();
 
-  float roll = mpu6050.getAngleX();  // Get the roll angle (angleX)
+    float roll = mpu6050.getAngleX();
 
-  Serial.print("angleX: ");
-  Serial.print(roll);
+    Serial.print("Roll: ");
+    Serial.println(roll);
 
-  // Define conditions based on roll angle
-  if (roll >= 1 && roll <= 100) {
-    Serial.println("\tNormal Condition.");
-  } 
-  else if (roll >= -150 && roll <= -4) {
-    Serial.println("\tAccident Occurred!");
+    if (roll >= -150 && roll <= -4)
+    {
+        if (!accidentDetected)
+        {
+            accidentDetected = true;
 
-    if (!accidentDetected) {
-      accidentDetected = true;
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Accident!");
 
-      // Display "Accident Occurred" on LCD
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("Accident Occurred!");
+            sendSMSWithLocation(phoneNumber);
 
-      sendSMS(phoneNumber, message);
+            lcd.setCursor(0, 1);
+            lcd.print("SMS Sent");
 
-      // Display "SMS Sent Successfully" on LCD
-      lcd.setCursor(0, 1);
-      lcd.print("SMS Sent");
-
-      makeContinuousCalls(phoneNumber);
+            makeCalls(phoneNumber);
+        }
     }
-  }
 
-  delay(500);  // Small delay for readability
+    delay(500);
 }
 
-void sendSMS(const char* number, const String& msg) {
-  gsmSerial.print("AT+CMGF=1\r");  // Set SMS to text mode
-  delay(100);
-  gsmSerial.print("AT+CMGS=\"");
-  gsmSerial.print(number);
-  gsmSerial.print("\"\r");
-  delay(100);
-  gsmSerial.print(msg);
-  delay(100);
-  gsmSerial.write(26);  // ASCII code for CTRL+Z to send SMS
+void readGPS()
+{
+    while (gpsSerial.available() > 0)
+    {
+        gps.encode(gpsSerial.read());
+    }
 }
 
-void makeContinuousCalls(const char* number) {
-  int retryCount = 3;  // Limit to 3 call attempts
+void sendSMSWithLocation(const char *number)
+{
+    char message[160];
 
-  while (retryCount > 0) {
-    gsmSerial.print("ATD");
+    if (gps.location.isValid())
+    {
+        float latitude = gps.location.lat();
+        float longitude = gps.location.lng();
+
+        sprintf(message,"Accident detected! Location:\nhttps://maps.google.com/?q=%.6f,%.6f", latitude, longitude);
+    }
+    else
+    {
+        sprintf(message, "Accident detected! GPS location not available.");
+    }
+
+    gsmSerial.println("AT+CMGF=1");
+    delay(1000);
+
+    gsmSerial.print("AT+CMGS=\"");
     gsmSerial.print(number);
-    gsmSerial.print(";\r");
-    delay(20000);  // Call duration
+    gsmSerial.println("\"");
+    delay(1000);
 
-    gsmSerial.print("ATH\r");  // Hang up
-    delay(1000);  // Delay between calls
+    gsmSerial.print(message);
+    delay(500);
 
-    retryCount--;
-  }
+    gsmSerial.write(26);
+    delay(3000);
 }
+
+void makeCalls(const char *number)
+{
+    int retry = 3;
+
+    while (retry > 0)
+    {
+        gsmSerial.print("ATD");
+        gsmSerial.print(number);
+        gsmSerial.println(";");
+        delay(20000);
+
+        gsmSerial.println("ATH");
+        delay(2000);
+
+        retry--;
+    }
+}
+
